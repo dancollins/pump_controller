@@ -122,9 +122,8 @@ clean:
 	rm -rf output
 	rm $(PROJECT).map
 
-prog:
+prog: all
 	stm32flash -w output/$(PROJECT).bin -v -g 0x0 /dev/ttyUSB0
-	miniterm.py -b 115200 -D /dev/ttyUSB0
 
 #
 # TOOLCHAIN
