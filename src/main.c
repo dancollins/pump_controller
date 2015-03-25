@@ -20,12 +20,19 @@
 #include "libnarm.h"
 
 
+/* Alpha until all the peripherals are working */
+#define VERSION "0.1a"
+
+
 #define LED1_PIN GPIO_Pin_3
 #define LED2_PIN GPIO_Pin_4
 #define LED_PORT GPIOB
 
+/** Number of crests to sound out the sonar */
+#define N_CRESTS (4)
 
-void init_sonar(void) {
+
+void sn_init(void) {
   GPIO_InitTypeDef gpio_cfg;
   TIM_TimeBaseInitTypeDef tim_base_cfg;
   TIM_OCInitTypeDef oc_cfg;
@@ -36,6 +43,7 @@ void init_sonar(void) {
   /* Enable clocks */
   RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA, ENABLE);
   RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM1, ENABLE);
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
 
   /* Configure TIM1_CH1 and TIM1_CH1N for the ultrasonic transmitter */
   gpio_cfg.GPIO_Pin = GPIO_Pin_7 | GPIO_Pin_8;
@@ -62,6 +70,9 @@ void init_sonar(void) {
    *
    * We insert a short dead time so that there's no overlap with the
    * transistors of 11/SystemCoreClock ns (selected to copy the example)
+   *
+   * We also set the repitition value to generate an interrupt after a
+   * certain time.
    */
   TIM1_Period = (SystemCoreClock / 40000) - 1;
   Channel1Pulse = (uint16_t)(((uint32_t) 5 * (TIM1_Period - 1)) / 10);
@@ -71,7 +82,7 @@ void init_sonar(void) {
   tim_base_cfg.TIM_CounterMode = TIM_CounterMode_Up;
   tim_base_cfg.TIM_Period = TIM1_Period;
   tim_base_cfg.TIM_ClockDivision = 0;
-  tim_base_cfg.TIM_RepetitionCounter = 0;
+  tim_base_cfg.TIM_RepetitionCounter = N_CRESTS - 1;
   TIM_TimeBaseInit(TIM1, &tim_base_cfg);
 
   /* Configure CH1 to be in PWM mode */
@@ -85,6 +96,8 @@ void init_sonar(void) {
   oc_cfg.TIM_OCNIdleState = TIM_OCNIdleState_Reset;
   TIM_OC1Init(TIM1, &oc_cfg);
 
+  TIM_SelectOnePulseMode(TIM1, TIM_OPMode_Single);
+
   /* Dead time, lock configuration and automatic output enable */
   bdtr_cfg.TIM_OSSRState = TIM_OSSRState_Enable;
   bdtr_cfg.TIM_OSSIState = TIM_OSSIState_Enable;
@@ -93,7 +106,10 @@ void init_sonar(void) {
   bdtr_cfg.TIM_Break = TIM_Break_Disable;
   bdtr_cfg.TIM_AutomaticOutput = TIM_AutomaticOutput_Enable;
   TIM_BDTRConfig(TIM1, &bdtr_cfg);
+}
 
+void sn_send_pulse(void) {
+  /* Start the PWM. The outputs will automatically start */
   TIM_Cmd(TIM1, ENABLE);
 }
 
@@ -105,8 +121,10 @@ int main(void) {
   nm_systick_init();
   nm_debug_init();
 
+  printf("Pump Controller " VERSION "\n");
+
   /* Start the sonar */
-  init_sonar();
+  sn_init();
 
   /* Prepare the status LEDs */
   RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOB, ENABLE);
@@ -118,14 +136,11 @@ int main(void) {
   GPIO_Init(LED_PORT, &gpio_cfg);
   GPIO_ResetBits(LED_PORT, LED1_PIN | LED2_PIN);
 
-  printf("Pump Controller v0.1a\n");
-
   while(1) {
-	GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_SET);
-	nm_systick_delay(250);
-	GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_RESET);
-	nm_systick_delay(250);
+	sn_send_pulse();
+	nm_systick_delay(100);
   }
 
   return 0;
 }
+
