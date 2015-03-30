@@ -62,7 +62,7 @@ GC=-Wl,--gc-sections
 MAP=-Wl,-Map=$(PROJECT).map
 
 CFLAGS += $(ARCH_FLAGS) $(STM_DEFS)
-CFLAGS += -Wall -Werror -g -std=gnu99
+CFLAGS += -Wall -Werror -Wno-unused-variable -g -std=gnu99
 CFLAGS += -Os -flto -ffunction-sections -fdata-sections
 CFLAGS += -fno-builtin
 
@@ -123,7 +123,7 @@ clean:
 	rm $(PROJECT).map
 
 prog: all
-	stm32flash -w output/$(PROJECT).bin -v -g 0x0 /dev/ttyUSB0
+	st-flash write output/$(PROJECT).bin 0x8000000
 
 #
 # TOOLCHAIN
