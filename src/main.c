@@ -32,14 +32,14 @@
 #define LED_PORT GPIOB
 
 /* Number of crests to sound out the sonar */
-#define N_CRESTS (4)
+#define N_CRESTS (3)
 
 /* Number of samples needed to capture the waveform. Keep in mind that each
  * sample is two octets.
  *
- * Time needed to capture a reflection 20cm away. 20cm is about as far
+ * Time needed to capture a reflection 30cm away. 30cm is about as far
  * as we can send a pulse before the captured waveform is in the noise
- * t_reflect = d/v => t_reflect = 0.4m / 340ms^-1 = 0.0012s
+ * t_reflect = d/v => t_reflect = 0.6m / 340ms^-1 = 0.0017s
  *
  * Time needed per ADC sample
  * T_s = 28.5 cycles, T_sar = 12.5 cycles
@@ -47,16 +47,17 @@
  * F_adc = 14MHz
  * t_conv = 1/F_adc * T_conv = 2.9us
  *
- * Samples needed to capture 40cm of data
- * n_samp = t_reflect / t_conv = 409.756
+ * Samples needed to capture 60cm of data
+ * n_samp = t_reflect / t_conv = 608.519
  */
-#define N_SAMPLES (410)
-#define T_SAMPLE (2.6e-6)
+#define N_SAMPLES (610)
+#define T_SAMPLE (2.9e-6)
 
 #define V_SOUND (340.0)
 
-/* Point at which we consider the receiver output to be showing data */
-#define THRESHOLD (3000)
+/* Point at which we consider the receiver output to be showing data.
+ * This value was calibrated through trial and error. */
+#define THRESHOLD (500)
 
 
 /* Buffer to store captured waveform in. We waste a little memory by
@@ -254,7 +255,7 @@ int sn_get_index(void) {
 
 int main(void) {
   GPIO_InitTypeDef gpio_cfg;
-  int index;
+  int index, i;
 
   /* Start libnarm */
   nm_systick_init();
@@ -286,12 +287,23 @@ int main(void) {
 
 	/* Find and display the index */
 	index = sn_get_index();
-	printf("index = %d\n", index);
+
+	index /= 8;
+	printf("|");
+	for (i = 0; i < index; i++)
+	  printf("-");
+	if (index > 0)
+	  printf("|");
+	printf("\n");
+
 	if (index >= 0) {
 	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_SET);
 	} else {
 	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_RESET);
 	}
+
+	/* We don't need this to be so fast! */
+	nm_systick_delay(50);
   }
 
   return 0;
