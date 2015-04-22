@@ -22,8 +22,14 @@
 #include "libnarm.h"
 
 
-/* Alpha until all the peripherals are working */
-#define VERSION "0.1a"
+#define VERSION "0.1b"
+
+#define MAX16 ((1<<16)-1)
+#define constrain(x) \
+  if (x < 0)\
+	x = 0; \
+  if (x > MAX16) \
+	x = MAX16;
 
 
 /* Convenience macros for the LEDs */
@@ -50,14 +56,22 @@
  * Samples needed to capture 60cm of data
  * n_samp = t_reflect / t_conv = 608.519
  */
-#define N_SAMPLES (610)
+#define N_SAMPLES (1000)
 #define T_SAMPLE (2.9e-6)
 
 #define V_SOUND (340.0)
 
 /* Point at which we consider the receiver output to be showing data.
- * This value was calibrated through trial and error. */
-#define THRESHOLD (2400)
+ * This value was calibrated through trial and error. It's set such
+ * that the reflected pulse at index N_SAMPLES would never be big
+ * enough to get measured. If not, we get a problem where the returned
+ * index wraps around... */
+#define THRESHOLD (2600)
+
+/* PID values */
+#define Kp (50)
+#define Ki (15)
+#define Kd (5)
 
 
 /* Buffer to store captured waveform in. We waste a little memory by
@@ -65,6 +79,9 @@
  * processing the data as we don't need to pack/unpack. */
 static uint16_t waveform_buffer[N_SAMPLES];
 static volatile uint32_t waveform_done;
+
+
+static uint16_t TIM2_Period;
 
 
 void sn_init(void) {
@@ -253,9 +270,83 @@ int sn_get_index(void) {
 }
 
 
+void motor_init(void) {
+  GPIO_InitTypeDef gpio_cfg;
+  TIM_TimeBaseInitTypeDef tim_base_cfg;
+  TIM_OCInitTypeDef oc_cfg;
+
+
+  /* Enable clocks */
+  RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA, ENABLE);
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+
+
+  /* Configure TIM2_CH2 for the motor */
+  gpio_cfg.GPIO_Pin = GPIO_Pin_1;
+  gpio_cfg.GPIO_Speed = GPIO_Speed_50MHz;
+  gpio_cfg.GPIO_Mode = GPIO_Mode_AF;
+  gpio_cfg.GPIO_OType = GPIO_OType_PP;
+  gpio_cfg.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_Init(GPIOA, &gpio_cfg);
+
+  GPIO_PinAFConfig(GPIOA, GPIO_PinSource1, GPIO_AF_2);
+
+
+  /* Configure a timer to generate a PWM signal at 1KHz. We'll vary
+   * the duty cycle depending on the water level reading.
+   *
+   * The timer input clock is set to APB2 clock (PCLK2) which is set to
+   * HCLK telling us that the TIM2 clock = SystemCoreClock (48MHz)
+   *
+   * We want to generate a PWM signal at 10kHz:
+   * - TIM2_Period = (SystemCoreClock / 1000) - 1
+   * Notice this fits in a 16bit value up until the core clock is
+   * 65MHz. This chip wont go that fast, but it's important to keep
+   * it in mind!
+   *
+   * The timer pulse, initially, will be set to 0%.
+   */
+  TIM2_Period = (SystemCoreClock / 10000) - 1;
+
+  /* Configure the time base */
+  tim_base_cfg.TIM_Prescaler = 0;
+  tim_base_cfg.TIM_CounterMode = TIM_CounterMode_Up;
+  tim_base_cfg.TIM_Period = TIM2_Period;
+  tim_base_cfg.TIM_ClockDivision = 0;
+  TIM_TimeBaseInit(TIM2, &tim_base_cfg);
+
+  /* Configure CH2 to be in PWM mode */
+  oc_cfg.TIM_OCMode = TIM_OCMode_PWM1;
+  oc_cfg.TIM_OutputState = TIM_OutputState_Enable;
+  oc_cfg.TIM_OutputNState = TIM_OutputNState_Enable;
+  oc_cfg.TIM_Pulse = (uint16_t)((80 * ((uint32_t)TIM2_Period - 1)) / 100);
+  oc_cfg.TIM_OCPolarity = TIM_OCPolarity_High;
+  oc_cfg.TIM_OCIdleState = TIM_OCIdleState_Reset;
+  TIM_OC2Init(TIM2, &oc_cfg);
+
+  TIM_Cmd(TIM2, ENABLE);
+  TIM_CtrlPWMOutputs(TIM2, ENABLE);
+}
+
+void motor_set_pulse(uint16_t pulse) {
+  /* The timer pulse is calculated as:
+   * - Channel1Pulse = duty * (TIM2_Period - 1) / 100 */
+  TIM_SetCompare2(TIM2, pulse);
+}
+
+
 int main(void) {
   GPIO_InitTypeDef gpio_cfg;
-  int index, i;
+  TIM_TimeBaseInitTypeDef tim_base_cfg;
+
+  int index;
+  int set_point = 400;
+  int error = 0, old_error = 0;
+
+  int inte = 0;
+  int diff = 0;
+
+  int output_value;
 
   /* Start libnarm */
   nm_systick_init();
@@ -263,8 +354,11 @@ int main(void) {
 
   printf("Pump Controller " VERSION "\n");
 
-  /* Start the sonar */
+  /* Prepare the sonar */
   sn_init();
+
+  /* Prepare the motor driver */
+  motor_init();
 
   /* Prepare the status LEDs */
   RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOB, ENABLE);
@@ -276,7 +370,7 @@ int main(void) {
   GPIO_Init(LED_PORT, &gpio_cfg);
   GPIO_ResetBits(LED_PORT, LED1_PIN | LED2_PIN);
 
-  printf("Start up complete\n");
+  printf("\x1B[2J");
 
   while(1) {
 	/* Send a pulse and measure the reflection */
@@ -285,29 +379,41 @@ int main(void) {
 	while (!waveform_done)
 	  ;
 
-	/* Find and display the index */
+	/* Find the ADC sample index crossing the threshold */
 	index = sn_get_index();
 
-#if 1
-	index /= 8;
-	printf("|");
-	for (i = 0; i < index; i++)
-	  printf("-");
-	if (index > 0)
-	  printf("|");
-	printf("\n");
-#else
-	printf("index: %d\n", index);
-#endif
+	/* Skip samples if we can't see the water */
+	if (index == -1)
+	  continue;
 
-	if (index >= 0) {
-	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_SET);
-	} else {
-	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_RESET);
-	}
+	/* Calculate the error. A positive error indicates we have too
+	 * much water in the tank. */
+	old_error = error;
+	error = index - set_point;
 
-	/* We don't need this to be so fast! */
-	nm_systick_delay(50);
+	/* Integral */
+	inte += error;
+	constrain(inte);
+
+	/* Differential */
+	diff = error - old_error;
+	constrain(diff);
+
+	/* Now we have all the terms we need, let's calculate the output
+	 * value */
+	output_value = (Kp * error) + (inte / Ki);
+	constrain(output_value);
+
+	motor_set_pulse(output_value);
+
+	printf("\x1B[H");
+	printf("input: %d\x1B[K\n", index);
+	printf("set point: %d\x1B[K\n", set_point);
+	printf("error: %d\x1B[K\n", error);
+	printf("inte: %d\x1B[K\n", inte);
+	printf("output: %d\x1B[K\n", output_value);
+
+	nm_systick_delay(20);
   }
 
   return 0;
