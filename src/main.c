@@ -57,7 +57,7 @@
 
 /* Point at which we consider the receiver output to be showing data.
  * This value was calibrated through trial and error. */
-#define THRESHOLD (500)
+#define THRESHOLD (2400)
 
 
 /* Buffer to store captured waveform in. We waste a little memory by
@@ -288,6 +288,7 @@ int main(void) {
 	/* Find and display the index */
 	index = sn_get_index();
 
+#if 1
 	index /= 8;
 	printf("|");
 	for (i = 0; i < index; i++)
@@ -295,6 +296,9 @@ int main(void) {
 	if (index > 0)
 	  printf("|");
 	printf("\n");
+#else
+	printf("index: %d\n", index);
+#endif
 
 	if (index >= 0) {
 	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_SET);
