@@ -189,8 +189,8 @@ void sn_init(void) {
   adc_cfg.ADC_ScanDirection = ADC_ScanDirection_Backward;
   ADC_Init(ADC1, &adc_cfg);
 
-  /* Convert the ADC1 Channel3 with a 28.5 cycle sampling time (341KHz) */
-  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_28_5Cycles);
+  /* Convert the ADC1 Channel3  */
+  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_41_5Cycles);
 
   /* ADC Calibration. We need to do this before we configure DMA. */
   ADC_GetCalibrationFactor(ADC1);
@@ -256,11 +256,7 @@ void sn_send_pulse(void) {
 int sn_get_index(void) {
   int i;
 
-  /* We start searching after the start of the buffer. This saves a little
-   * time, and also prevents us from reading the potentially corrupted
-   * first sample.
-   * TODO: Why is the first sample corrupted by the set point reading? */
-  for (i = 10; i < N_SAMPLES; i++) {
+  for (i = 0; i < N_SAMPLES; i++) {
 	if (waveform_buffer[i] > THRESHOLD)
 	  break;
   }
@@ -377,7 +373,7 @@ uint16_t get_set_point(void) {
   adc_cfg.ADC_ContinuousConvMode = ENABLE;
   ADC_Init(ADC1, &adc_cfg);
 
-  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_28_5Cycles);
+  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_41_5Cycles);
   ADC_GetCalibrationFactor(ADC1);
   ADC_Cmd(ADC1, ENABLE);
 
