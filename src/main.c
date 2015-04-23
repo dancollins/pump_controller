@@ -468,6 +468,7 @@ int main(void) {
 
 	motor_set_pulse(output_value);
 
+	/* Display all of the variables on the terminal */
 	printf("\x1B[H");
 	printf("input: %d\x1B[K\n", index);
 	printf("set point: %d\x1B[K\n", set_point);
