@@ -80,8 +80,9 @@
 static uint16_t waveform_buffer[N_SAMPLES];
 static volatile uint32_t waveform_done;
 
-
-static uint16_t TIM2_Period;
+/* We keep this value around to make it easy to change the ADC
+ * configuration */
+ADC_InitTypeDef adc_cfg;
 
 
 void sn_init(void) {
@@ -89,7 +90,6 @@ void sn_init(void) {
   TIM_TimeBaseInitTypeDef tim_base_cfg;
   TIM_OCInitTypeDef oc_cfg;
   TIM_BDTRInitTypeDef bdtr_cfg;
-  ADC_InitTypeDef adc_cfg;
   DMA_InitTypeDef dma_cfg;
   NVIC_InitTypeDef nvic_cfg;
 
@@ -275,6 +275,8 @@ void motor_init(void) {
   TIM_TimeBaseInitTypeDef tim_base_cfg;
   TIM_OCInitTypeDef oc_cfg;
 
+  uint16_t TIM2_Period;
+
 
   /* Enable clocks */
   RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA, ENABLE);
@@ -335,6 +337,57 @@ void motor_set_pulse(uint16_t pulse) {
 }
 
 
+/**
+ * Does an ADC read of the potentiometer to find the set point.
+ * We need to take the ADC from DMA, take a reading, and then give
+ * it back to DMA.
+ */
+uint16_t get_set_point(void) {
+  uint16_t ret;
+
+  /* Stop DMA from running */
+  ADC_DMACmd(ADC1, DISABLE);
+  ADC_Cmd(ADC1, DISABLE);
+  DMA_Cmd(DMA1_Channel1, DISABLE);
+
+  /* Select the potentiometer channel. We sample for a long time so
+   * the value is a bit more stable */
+  ADC_ChannelConfig(ADC1, ADC_Channel_4, ADC_SampleTime_239_5Cycles);
+  ADC_GetCalibrationFactor(ADC1);
+  ADC_Cmd(ADC1, ENABLE);
+
+  /* Perform an ADC conversion */
+  ADC_StartOfConversion(ADC1);
+  while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
+
+  ret = ADC_GetConversionValue(ADC1);
+  /* This is a bit of a sneaky hack. We know the ADC value will be
+   * between 0 - 4096, and we know the maximum index is 1000 (so
+   * the biggest set point is 1000). Dividing by 4 means the pot
+   * range is roughly that of our set point. Also, the compiler
+   * will optimise the divide by four into a right shift by 2. */
+  ret /= 4;
+
+  /* Stop any more conversions from happening */
+  ADC_StopOfConversion(ADC1);
+
+  /* Set the ADC up for the sonar */
+  ADC_Cmd(ADC1, DISABLE);
+
+  adc_cfg.ADC_ContinuousConvMode = ENABLE;
+  ADC_Init(ADC1, &adc_cfg);
+
+  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_28_5Cycles);
+  ADC_GetCalibrationFactor(ADC1);
+  ADC_Cmd(ADC1, ENABLE);
+
+  ADC_DMACmd(ADC1, ENABLE);
+  DMA_Cmd(DMA1_Channel1, ENABLE);
+
+  return ret;
+}
+
+
 int main(void) {
   GPIO_InitTypeDef gpio_cfg;
   TIM_TimeBaseInitTypeDef tim_base_cfg;
@@ -370,9 +423,18 @@ int main(void) {
   GPIO_Init(LED_PORT, &gpio_cfg);
   GPIO_ResetBits(LED_PORT, LED1_PIN | LED2_PIN);
 
+  /* Prepare set point pin */
+  gpio_cfg.GPIO_Pin = GPIO_Pin_4;
+  gpio_cfg.GPIO_Mode = GPIO_Mode_AN;
+  GPIO_Init(GPIOA, &gpio_cfg);
+
+  /* Clear the terminal */
   printf("\x1B[2J");
 
   while(1) {
+	/* Get the current set point */
+	set_point = get_set_point();
+
 	/* Send a pulse and measure the reflection */
     waveform_done = 0;
     sn_send_pulse();
@@ -401,7 +463,7 @@ int main(void) {
 
 	/* Now we have all the terms we need, let's calculate the output
 	 * value */
-	output_value = (Kp * error) + (inte / Ki);
+	output_value = (Kp * error) + (inte / Ki) + (diff / Kd);
 	constrain(output_value);
 
 	motor_set_pulse(output_value);
@@ -411,6 +473,7 @@ int main(void) {
 	printf("set point: %d\x1B[K\n", set_point);
 	printf("error: %d\x1B[K\n", error);
 	printf("inte: %d\x1B[K\n", inte);
+	printf("diff: %d\x1B[K\n", diff);
 	printf("output: %d\x1B[K\n", output_value);
 
 	nm_systick_delay(20);
