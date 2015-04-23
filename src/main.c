@@ -25,11 +25,11 @@
 #define VERSION "0.1b"
 
 #define MAX16 ((1<<16)-1)
-#define constrain(x) \
-  if (x < 0)\
-	x = 0; \
-  if (x > MAX16) \
-	x = MAX16;
+#define constrain(x, l, u)						\
+  if (x < l)\
+	x = l; \
+  if (x > u) \
+	x = u;
 
 
 /* Convenience macros for the LEDs */
@@ -66,13 +66,11 @@
  * that the reflected pulse at index N_SAMPLES would never be big
  * enough to get measured. If not, we get a problem where the returned
  * index wraps around... */
-#define THRESHOLD (2600)
+#define THRESHOLD (2300)
 
 /* PID values */
-#define Kp (50)
-#define Ki (15)
-#define Kd (5)
-
+#define Kp (40)
+#define Ki (1)
 
 /* Buffer to store captured waveform in. We waste a little memory by
  * using 16bit values, but it saves a lot of time both inserting and
@@ -258,7 +256,11 @@ void sn_send_pulse(void) {
 int sn_get_index(void) {
   int i;
 
-  for (i = 0; i < N_SAMPLES; i++) {
+  /* We start searching after the start of the buffer. This saves a little
+   * time, and also prevents us from reading the potentially corrupted
+   * first sample.
+   * TODO: Why is the first sample corrupted by the set point reading? */
+  for (i = 10; i < N_SAMPLES; i++) {
 	if (waveform_buffer[i] > THRESHOLD)
 	  break;
   }
@@ -361,12 +363,10 @@ uint16_t get_set_point(void) {
   while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
 
   ret = ADC_GetConversionValue(ADC1);
-  /* This is a bit of a sneaky hack. We know the ADC value will be
-   * between 0 - 4096, and we know the maximum index is 1000 (so
-   * the biggest set point is 1000). Dividing by 4 means the pot
-   * range is roughly that of our set point. Also, the compiler
-   * will optimise the divide by four into a right shift by 2. */
-  ret /= 4;
+  /* Sneaky hack to get the set point into roughly the right range. This
+   * results in both an efficient right shift (instead of divide) as well
+   * as a range 0 - 512; good enough for our set point */
+  ret /= 8;
 
   /* Stop any more conversions from happening */
   ADC_StopOfConversion(ADC1);
@@ -394,10 +394,10 @@ int main(void) {
 
   int index;
   int set_point = 400;
-  int error = 0, old_error = 0;
+  int error = 0;
 
   int inte = 0;
-  int diff = 0;
+  int inte_out;
 
   int output_value;
 
@@ -450,23 +450,26 @@ int main(void) {
 
 	/* Calculate the error. A positive error indicates we have too
 	 * much water in the tank. */
-	old_error = error;
 	error = index - set_point;
 
 	/* Integral */
 	inte += error;
-	constrain(inte);
-
-	/* Differential */
-	diff = error - old_error;
-	constrain(diff);
+	constrain(inte, 0, MAX16*Ki);
+	inte_out = inte / Ki;
+	constrain(inte_out, 0, MAX16);
 
 	/* Now we have all the terms we need, let's calculate the output
 	 * value */
-	output_value = (Kp * error) + (inte / Ki) + (diff / Kd);
-	constrain(output_value);
+	output_value = (Kp * error) + inte_out;
+	constrain(output_value, 0, MAX16);
 
 	motor_set_pulse(output_value);
+
+	/* Put a light on if the error is small */
+	if (error > -20 && error < 20)
+	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_SET);
+	else
+	  GPIO_WriteBit(LED_PORT, LED1_PIN, Bit_RESET);
 
 	/* Display all of the variables on the terminal */
 	printf("\x1B[H");
@@ -474,10 +477,9 @@ int main(void) {
 	printf("set point: %d\x1B[K\n", set_point);
 	printf("error: %d\x1B[K\n", error);
 	printf("inte: %d\x1B[K\n", inte);
-	printf("diff: %d\x1B[K\n", diff);
 	printf("output: %d\x1B[K\n", output_value);
 
-	nm_systick_delay(20);
+	nm_systick_delay(100);
   }
 
   return 0;
@@ -498,8 +500,8 @@ void TIM1_BRK_UP_TRG_COM_IRQHandler(void) {
   /* Start the ADC */
   ADC_StartOfConversion(ADC1);
 
-  /* Turn on the LED to let us know the sample has begun */
-  GPIO_WriteBit(LED_PORT, LED2_PIN, Bit_SET);
+  /* Turn off the LED to let us know the sample has begun */
+  GPIO_WriteBit(LED_PORT, LED2_PIN, Bit_RESET);
 }
 
 /* Run when the DMA has copied N_SAMPLES from the ADC */
@@ -511,8 +513,8 @@ void DMA1_Channel1_IRQHandler(void) {
 
   waveform_done = 1;
 
-  /* Turn off the LED to say we're done! */
-  GPIO_WriteBit(LED_PORT, LED2_PIN, Bit_RESET);
+  /* Turn on the LED to say we're done! */
+  GPIO_WriteBit(LED_PORT, LED2_PIN, Bit_SET);
 }
 
 
