@@ -190,7 +190,7 @@ void sn_init(void) {
   ADC_Init(ADC1, &adc_cfg);
 
   /* Convert the ADC1 Channel3  */
-  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_41_5Cycles);
+  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_28_5Cycles);
 
   /* ADC Calibration. We need to do this before we configure DMA. */
   ADC_GetCalibrationFactor(ADC1);
@@ -350,8 +350,7 @@ uint16_t get_set_point(void) {
 
   /* Select the potentiometer channel. We sample for a long time so
    * the value is a bit more stable */
-  ADC_ChannelConfig(ADC1, ADC_Channel_4, ADC_SampleTime_239_5Cycles);
-  ADC_GetCalibrationFactor(ADC1);
+  ADC_ChannelConfig(ADC1, ADC_Channel_9, ADC_SampleTime_41_5Cycles);
   ADC_Cmd(ADC1, ENABLE);
 
   /* Perform an ADC conversion */
@@ -367,14 +366,16 @@ uint16_t get_set_point(void) {
   /* Stop any more conversions from happening */
   ADC_StopOfConversion(ADC1);
 
+  /* Take the potentiometer out of the sequence */
+  ADC1->CHSELR &= ~ADC_Channel_9;
+
   /* Set the ADC up for the sonar */
   ADC_Cmd(ADC1, DISABLE);
 
   adc_cfg.ADC_ContinuousConvMode = ENABLE;
   ADC_Init(ADC1, &adc_cfg);
 
-  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_41_5Cycles);
-  ADC_GetCalibrationFactor(ADC1);
+  ADC_ChannelConfig(ADC1, ADC_Channel_3, ADC_SampleTime_28_5Cycles);
   ADC_Cmd(ADC1, ENABLE);
 
   ADC_DMACmd(ADC1, ENABLE);
@@ -420,11 +421,12 @@ int main(void) {
   GPIO_ResetBits(LED_PORT, LED1_PIN | LED2_PIN);
 
   /* Prepare set point pin */
-  gpio_cfg.GPIO_Pin = GPIO_Pin_4;
+  gpio_cfg.GPIO_Pin = GPIO_Pin_1;
   gpio_cfg.GPIO_Mode = GPIO_Mode_AN;
-  GPIO_Init(GPIOA, &gpio_cfg);
+  GPIO_Init(GPIOB, &gpio_cfg);
 
   /* Clear the terminal */
+  fprintf(stderr, " ");
   printf("\x1B[2J");
 
   while(1) {
