@@ -24,7 +24,7 @@
 
 #define VERSION "0.1b"
 
-#define MAX16 ((1<<16)-1)
+#define MOTOR_MAX 5000
 #define constrain(x, l, u)						\
   if (x < l)\
 	x = l; \
@@ -452,14 +452,14 @@ int main(void) {
 
 	/* Integral */
 	inte += error;
-	constrain(inte, 0, MAX16*Ki);
+	constrain(inte, 0, MOTOR_MAX*Ki);
 	inte_out = inte / Ki;
-	constrain(inte_out, 0, MAX16);
+	constrain(inte_out, 0, MOTOR_MAX);
 
 	/* Now we have all the terms we need, let's calculate the output
 	 * value */
 	output_value = (Kp * error) + inte_out;
-	constrain(output_value, 0, MAX16);
+	constrain(output_value, 0, MOTOR_MAX);
 
 	motor_set_pulse(output_value);
 
